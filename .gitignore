@@ -5,7 +5,6 @@
 *.slo
 *.lo
 *.o
-*.obj
 
 # Precompiled Headers
 *.gch
@@ -34,7 +33,14 @@
 # Folders
 bin
 build
+logs/*
+!logs/.gitkeep
 .vscode
+
+# Data Files
+*.csv
+*.txt
+!CMakeLists.txt
 
 # Mac
 .DS_Store

@@ -10,7 +10,7 @@
 // sai main libraries includes
 #include "SaiModel.h"
 
-// sai utilities from sai-common
+// sai utilities from saw-common
 #include "timer/LoopTimer.h"
 #include "redis/RedisClient.h"
 
@@ -115,11 +115,11 @@ int main()
 	// *************************************************************************
 
 	// ---------------------------  question 2-b -------------------------------
-	ee_pos_in_link = Vector3d(0.0, 0.0, 0.0); // modify this
+	ee_pos_in_link = Vector3d(0.0, 0.0, 1.5); // modify this
 
 	// ---------------------------  question 2-c -------------------------------
 	// part i
-	robot_q << 0.0, 0.0, 0.0; // modify this
+	robot_q << 0.0, 0.5, -M_PI/2; // modify this
 	robot->setQ(robot_q);
 	robot->updateKinematics();
 	ee_position = robot->position(ee_link_name, ee_pos_in_link);
@@ -129,7 +129,7 @@ int main()
 		 << ee_position.transpose() << endl
 		 << endl;
 	// part ii
-	robot_q << 0.0, 0.0, 0.0; // modify this
+	robot_q << M_PI/2, 0.5, -M_PI/2; // modify this
 	robot->setQ(robot_q);
 	robot->updateKinematics();
 	ee_position = robot->position(ee_link_name, ee_pos_in_link);
@@ -141,7 +141,7 @@ int main()
 
 	// ---------------------------  question 2-d -------------------------------
 	// part i
-	robot_q << 0.0, 0.0, 0.0; // modify this
+	robot_q << 0.0, 0.5, -M_PI/2; // modify this
 	robot->setQ(robot_q);
 	robot->updateKinematics();
 	ee_jacobian = robot->Jv(ee_link_name, ee_pos_in_link);
@@ -151,7 +151,7 @@ int main()
 		 << ee_jacobian << endl
 		 << endl;
 	// part ii
-	robot_q << 0.0, 0.0, 0.0; // modify this
+	robot_q << M_PI/2, 0.5, -M_PI/2; // modify this
 	robot->setQ(robot_q);
 	robot->updateKinematics();
 	ee_jacobian = robot->Jv(ee_link_name, ee_pos_in_link);
@@ -165,14 +165,21 @@ int main()
 	// part i
 	ofstream file_2e_i;
 	file_2e_i.open("../../homework/hw0/q2-e-i.txt");
-	robot_q << 0.0, 0.0, 0.0; // modify this
+	robot_q << 0.0, 0.5, -M_PI/2; // modify this
 	robot->setQ(robot_q);
 	robot->updateModel();
-	file_2e_i << 0 << "\t" << 0 << "\t" << 0 << "\n"; // modify this
+	file_2e_i << robot->M()(0,0) << "\t" << robot->M()(1,1) << "\t" << robot->M()(2,2) << "\n";
+
 	int n_steps = 250;
+	double theta3_min = -M_PI/2;
+	double theta3_max = M_PI/2;
+	double dtheta3 = (theta3_max - theta3_min) / (n_steps - 1);
 	for (int i = 0; i < n_steps; i++)
 	{
-		// write your code
+		robot_q << 0.0, 0.5, theta3_min + i * dtheta3;
+		robot->setQ(robot_q);
+		robot->updateModel();
+		file_2e_i << robot->M()(0,0) << "\t" << robot->M()(1,1) << "\t" << robot->M()(2,2) << "\n";
 	}
 	file_2e_i.close();
 
@@ -182,11 +189,17 @@ int main()
 	robot_q << 0.0, 0.0, 0.0; // modify this
 	robot->setQ(robot_q);
 	robot->updateModel();
-	file_2e_ii << 0 << "\t" << 0 << "\t" << 0 << "\n"; // modify this
+	file_2e_ii << robot->M()(0,0) << "\t" << robot->M()(1,1) << "\t" << robot->M()(2,2) << "\n";
 	n_steps = 250;
+	double d2_min = 0.0;
+	double d2_max = 2.0;
+	double dd2 = (d2_max - d2_min) / (n_steps - 1);
 	for (int i = 0; i < n_steps; i++)
 	{
-		// write your code
+		robot_q << 0.0, d2_min + i * dd2, 0.0;
+		robot->setQ(robot_q);
+		robot->updateModel();
+		file_2e_ii << robot->M()(0,0) << "\t" << robot->M()(1,1) << "\t" << robot->M()(2,2) << "\n";
 	}
 	file_2e_ii.close();
 
@@ -194,15 +207,23 @@ int main()
 	// part i
 	ofstream file_2f_i;
 	file_2f_i.open("../../homework/hw0/q2-f-i.txt");
-	robot_q << 0.0, 0.0, 0.0; // modify this
+	robot_q << 0.0, 0.5, -M_PI/2; // modify this
 	robot->setQ(robot_q);
 	robot->updateModel();
 	g = robot->jointGravityVector();
 	file_2f_i << g.transpose() << "\n";
 	n_steps = 250;
+	double theta3_min_f = -M_PI/2;
+	double theta3_max_f = M_PI/2;
+	double dtheta3_f = (theta3_max_f - theta3_min_f) / (n_steps - 1);
 	for (int i = 0; i < n_steps; i++)
 	{
-		// write your code
+		double theta3 = theta3_min_f + i * dtheta3_f;
+		robot_q << 0.0, 0.5, theta3;
+		robot->setQ(robot_q);
+		robot->updateModel();
+		g = robot->jointGravityVector();
+		file_2f_i << g.transpose() << "\n";
 	}
 	file_2f_i.close();
 
@@ -215,9 +236,17 @@ int main()
 	g = robot->jointGravityVector();
 	file_2f_ii << g.transpose() << "\n";
 	n_steps = 250;
+	double d2_min_f = 0.0;
+	double d2_max_f = 2.0;
+	double dd2_f = (d2_max_f - d2_min_f) / (n_steps - 1);
 	for (int i = 0; i < n_steps; i++)
 	{
-		// write your code
+		double d2 = d2_min_f + i * dd2_f;
+		robot_q << 0.0, d2, 0.0;
+		robot->setQ(robot_q);
+		robot->updateModel();
+		g = robot->jointGravityVector();
+		file_2f_ii << g.transpose() << "\n";
 	}
 	file_2f_ii.close();
 

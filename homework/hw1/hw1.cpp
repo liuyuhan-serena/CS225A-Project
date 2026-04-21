@@ -141,40 +141,86 @@ int main(int argc, char **argv)
         if (controller_number == 1)
         {
 
-            double kp = 0.0; // chose your p gain
-            double kv = 0.0; // chose your d gain
+            double kp = 400.0; 
+            double kv = 50.0; 
 
-            q_desired = initial_q; // change to the desired robot joint angles for the question
+            q_desired = initial_q; 
+            q_desired(0) = M_PI / 2.0;      // 90 deg
+            q_desired(1) = -M_PI / 4.0;     // -45 deg
+            q_desired(2) = 0.0;
+            q_desired(3) = -125.0 * M_PI / 180.0;
+            q_desired(4) = 0.0;
+            q_desired(5) = 80.0 * M_PI / 180.0;
+            q_desired(6) = 0.0;
 
-            control_torques.setZero(); // change to the control torques you compute
+            control_torques = -kp * (robot_q - q_desired) - kv * robot_dq;
         }
 
         // ---------------------------  question 2 ---------------------------------------
         else if (controller_number == 2)
         {
+            double kp = 400.0;
+            double kv = 50.0;  
 
-            control_torques.setZero();
+            q_desired = VectorXd(7);
+            q_desired << 90.0, -45.0, 0.0, -125.0, 0.0, 80.0, 0.0;
+            q_desired *= M_PI / 180.0;
+
+            VectorXd g = robot->jointGravityVector();
+            control_torques = -kp * (robot_q - q_desired) - kv * robot_dq + g;
         }
 
         // ---------------------------  question 3 ---------------------------------------
         else if (controller_number == 3)
         {
+            double kp = 400.0;
+            double kv = 50.0;   
 
-            control_torques.setZero();
+            q_desired = VectorXd(7);
+            q_desired << 90.0, -45.0, 0.0, -125.0, 0.0, 80.0, 0.0;
+            q_desired *= M_PI / 180.0;
+
+            MatrixXd A = robot->M();
+            VectorXd g = robot->jointGravityVector();
+
+            VectorXd command = -kp * (robot_q - q_desired) - kv * robot_dq;
+            control_torques = A * command + g;
         }
 
         // ---------------------------  question 4 ---------------------------------------
         else if (controller_number == 4)
         {
+            double kp = 400.0;
+            double kv = 40.0;   
 
-            control_torques.setZero();
+            q_desired = VectorXd(7);
+            q_desired << 90.0, -45.0, 0.0, -125.0, 0.0, 80.0, 0.0;
+            q_desired *= M_PI / 180.0;
+
+            MatrixXd A = robot->M();
+            VectorXd g = robot->jointGravityVector();
+            VectorXd b = robot->coriolisForce();   
+
+            VectorXd command = -kp * (robot_q - q_desired) - kv * robot_dq;
+            control_torques = A * command + b + g;
         }
 
         // ---------------------------  question 5 ---------------------------------------
         else if (controller_number == 5)
         {
+            double kp = 400.0;
+            double kv = 40.0;  
 
-            control_torques.setZero();
+            q_desired = VectorXd(7);
+            q_desired << 90.0, -45.0, 0.0, -125.0, 0.0, 80.0, 0.0;
+            q_desired *= M_PI / 180.0;
+
+            MatrixXd A = robot->M();
+            VectorXd g = robot->jointGravityVector();
+            VectorXd b = robot->coriolisForce();   
+
+            VectorXd command = -kp * (robot_q - q_desired) - kv * robot_dq;
+            control_torques = A * command + b + g;
         }
 
         // **********************

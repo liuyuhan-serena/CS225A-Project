@@ -264,7 +264,7 @@ int main(int argc, char** argv) {
             // 4.1 Vector3d F = Lambda * (kp * (x_des - x) - kv * dx) + p;
             // 4.2Vector3d F = (kp * (x_des - x) - kv * dx) + p;
             // 4.3Vector3d F = Lambda * (kp * (x_des - x) - kv * dx) + p;
-            Vector3d F = Lambda * (kp * (x_des - x) - kv * dx)；
+            Vector3d F = Lambda * (kp * (x_des - x) - kv * dx);
      
             VectorXd q_posture_des = VectorXd::Zero(dof);
 

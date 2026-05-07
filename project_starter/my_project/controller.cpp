@@ -25,7 +25,7 @@ void sighandler(int) { runloop = false; }
 int main()
 {
 	// Location of URDF files specifying world and robot information
-	static const string robot_file = string(CS225A_URDF_FOLDER) + "/panda/panda_arm_hand.urdf";
+	static const string robot_file = string(CS225A_URDF_FOLDER) + "/flexiv/flexiv.urdf";
 
 	// start redis client
 	auto redis_client = SaiCommon::RedisClient();

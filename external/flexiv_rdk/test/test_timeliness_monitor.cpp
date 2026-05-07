@@ -1,0 +1,156 @@
+/**
+ * @test test_timeliness_monitor.cpp
+ * A test to evaluate RDK's internal timeliness monitor on real-time modes. Bad communication or
+ * insufficient real-time performance of the workstation PC will cause the monitor's timeliness
+ * check to fail. A warning will be issued first, then if the check has failed too many times, the
+ * RDK connection with the server will be closed. During this test, the robot will hold its position
+ * using joint torque streaming mode.
+ * @copyright Copyright (C) 2016-2026 Flexiv Ltd. All Rights Reserved.
+ * @author Flexiv
+ */
+
+#include <flexiv/rdk/robot.hpp>
+#include <flexiv/rdk/scheduler.hpp>
+#include <flexiv/rdk/utility.hpp>
+#include <spdlog/spdlog.h>
+
+#include <iostream>
+#include <string>
+#include <cmath>
+#include <thread>
+#include <atomic>
+
+namespace {
+/** Atomic signal to stop scheduler tasks */
+std::atomic<bool> g_stop_sched = {false};
+}
+
+// callback function for realtime periodic task
+void PeriodicTask(flexiv::rdk::Robot& robot,
+    const std::vector<flexiv::rdk::JointGroup>& joint_groups,
+    const std::map<flexiv::rdk::JointGroup, std::vector<double>>& all_init_pos)
+{
+    // Loop counter
+    static unsigned int loop_counter = 0;
+
+    try {
+        // Monitor fault on the connected robot
+        if (robot.fault()) {
+            throw std::runtime_error(
+                "PeriodicTask: Fault occurred on the connected robot, exiting ...");
+        }
+        // Hold position
+        std::map<flexiv::rdk::JointGroup, flexiv::rdk::RtJointPositionCmd> rt_cmds;
+        for (const auto& group : joint_groups) {
+            const auto& init_pos = all_init_pos.at(group);
+            std::vector<double> target_vel(init_pos.size());
+            std::vector<double> target_acc(init_pos.size());
+            rt_cmds[group] = flexiv::rdk::RtJointPositionCmd(init_pos, target_vel, target_acc);
+        }
+        robot.StreamJointPosition(rt_cmds);
+
+        if (loop_counter == 5000) {
+            spdlog::warn(">>>>> Adding simulated loop delay <<<<<");
+        }
+        // simulate prolonged loop time after 5 seconds
+        else if (loop_counter > 5000) {
+            std::this_thread::sleep_for(std::chrono::microseconds(995));
+        }
+
+        loop_counter++;
+
+    } catch (const std::exception& e) {
+        spdlog::error(e.what());
+        g_stop_sched = true;
+    }
+}
+
+void PrintHelp()
+{
+    // clang-format off
+    std::cout << "Required arguments: [robot_sn]" << std::endl;
+    std::cout << "    robot_sn: Serial number of the robot to connect. Remove any space, e.g. Rizon4s-123456" << std::endl;
+    std::cout << "Optional arguments: None" << std::endl;
+    std::cout << std::endl;
+    // clang-format on
+}
+
+int main(int argc, char* argv[])
+{
+    // Parse Parameters
+    //==============================================================================================
+    if (argc < 2 || flexiv::rdk::utility::ProgramArgsExistAny(argc, argv, {"-h", "--help"})) {
+        PrintHelp();
+        return 1;
+    }
+
+    // Serial number of the robot to connect to. Remove any space, for example: Rizon4s-123456
+    std::string robot_sn = argv[1];
+
+    try {
+        // RDK Initialization
+        //==========================================================================================
+        // Instantiate robot interface
+        flexiv::rdk::Robot robot(robot_sn);
+
+        // Clear fault on the connected robot if any
+        if (robot.fault()) {
+            spdlog::warn("Fault occurred on the connected robot, trying to clear ...");
+            // Try to clear the fault
+            if (!robot.ClearFault()) {
+                spdlog::error("Fault cannot be cleared, exiting ...");
+                return 1;
+            }
+            spdlog::info("Fault on the connected robot is cleared");
+        }
+
+        // enable the robot, make sure the E-stop is released before enabling
+        spdlog::info("Enabling robot ...");
+        robot.Enable();
+
+        // Wait for the robot to become operational
+        while (!robot.operational()) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        spdlog::info("Robot is now operational");
+
+        // set mode after robot is operational
+        robot.SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
+
+        // All available joint groups of the robot
+        const auto joint_groups = robot.groups();
+
+        // Set initial joint positions
+        std::map<flexiv::rdk::JointGroup, std::vector<double>> all_init_pos;
+        for (const auto& [group, states] : robot.states()) {
+            all_init_pos[group] = states.q;
+            spdlog::info("[{}] Initial joint positions: {}",
+                flexiv::rdk::kJointGroupNames.at(group),
+                flexiv::rdk::utility::Vec2Str(all_init_pos.at(group)));
+        }
+        spdlog::warn(">>>>> Simulated loop delay will be added after 5 seconds <<<<<");
+
+        // Periodic Tasks
+        //==========================================================================================
+        flexiv::rdk::Scheduler scheduler;
+        // Add periodic task with 1ms interval and highest applicable priority
+        scheduler.AddTask(std::bind(PeriodicTask, std::ref(robot), std::cref(joint_groups),
+                              std::cref(all_init_pos)),
+            "HP periodic", 1, scheduler.max_priority());
+        // Start all added tasks
+        scheduler.Start();
+
+        // Block and wait for signal to stop scheduler tasks
+        while (!g_stop_sched) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        // Received signal to stop scheduler tasks
+        scheduler.Stop();
+
+    } catch (const std::exception& e) {
+        spdlog::error(e.what());
+        return 1;
+    }
+
+    return 0;
+}

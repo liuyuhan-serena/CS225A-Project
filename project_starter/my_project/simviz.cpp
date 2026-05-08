@@ -38,11 +38,11 @@ VectorXd ui_torques;
 mutex mutex_torques, mutex_update;
 
 // specify urdf and robots
-static const string robot_name = "panda_arm_hand";
+static const string robot_name = "flexiv";
 static const string camera_name = "camera_fixed";
 
 // dynamic objects information
-const vector<std::string> object_names = {"Ball"};
+const vector<std::string> object_names = {"mouse"};
 vector<Affine3d> object_poses;
 vector<VectorXd> object_velocities;
 const int n_objects = object_names.size();
@@ -53,7 +53,7 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim);
 int main()
 {
 	SaiModel::URDF_FOLDERS["CS225A_URDF_FOLDER"] = string(CS225A_URDF_FOLDER);
-	static const string robot_file = string(CS225A_URDF_FOLDER) + "/panda/panda_arm_hand.urdf";
+	static const string robot_file = string(CS225A_URDF_FOLDER) + "/flexiv/flexiv.urdf";
 	static const string world_file = string(MY_PROJECT_FOLDER) + "/world_my_project.urdf";
 	std::cout << "Loading URDF world model file: " << world_file << endl;
 
@@ -69,6 +69,30 @@ int main()
 	// load graphics scene
 	auto graphics = std::make_shared<SaiGraphics::SaiGraphics>(world_file, camera_name, false);
 
+	// === Attach EE camera to link7, but specify pose relative to flange ===
+	{
+			// Step 1: Measure these from the flange frame
+			Eigen::Affine3d T_flange_to_camera = Eigen::Affine3d::Identity();
+			T_flange_to_camera.translation() << -0.10, 0.00, -0.10;   // Measured from flange
+			T_flange_to_camera.linear() = 
+					Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+
+			// Step 2: From URDF: flange is at (0,0,0.081) in link7 frame, rotated 180° about Z
+			Eigen::Affine3d T_link7_to_flange = Eigen::Affine3d::Identity();
+			T_link7_to_flange.translation() << 0.0, 0.0, 0.081;
+			T_link7_to_flange.linear() = 
+					Eigen::AngleAxisd(-M_PI, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+
+			// Step 3: Compose
+			Eigen::Affine3d T_link7_to_camera = T_link7_to_flange * T_flange_to_camera;
+
+			graphics->attachCameraToRobotLink(
+					"ee_camera",
+					robot_name,
+					"link7",
+					T_link7_to_camera);
+	}
+	
 	// load robots
 	auto robot = std::make_shared<SaiModel::SaiModel>(robot_file, false);
 	// robot->setQ();
@@ -156,6 +180,22 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
 			lock_guard<mutex> lock(mutex_torques);
 			sim->setJointTorques(robot_name, control_torques + ui_torques);
 		}
+
+		// === Mouse trajectory: drive the box along a circle ===
+                {
+                        lock_guard<mutex> lock(mutex_update);
+                        double t = sim->time();
+                        double radius = 0.15;     // 15 cm
+                        double omega  = 2.67;      // rad/s, ~40cm/s
+                        double cx = 0.6, cy = 0.0, cz = 0.05;  // circle center
+
+                        Eigen::Affine3d mouse_pose = Eigen::Affine3d::Identity();
+                        mouse_pose.translation() << cx + radius * std::cos(omega * t),
+                                                    cy + radius * std::sin(omega * t),
+                                                    cz;
+                        sim->setObjectPose("mouse", mouse_pose);
+                }
+
 		sim->integrate();
 		redis_client.setEigen(JOINT_ANGLES_KEY, sim->getJointPositions(robot_name));
 		redis_client.setEigen(JOINT_VELOCITIES_KEY, sim->getJointVelocities(robot_name));

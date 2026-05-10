@@ -104,9 +104,19 @@ int main()
     auto sim = std::make_shared<SaiSimulation::SaiSimulation>(world_file, false);
     // === Set a sane initial pose (EE-down hover) ===
     VectorXd q_init(g_robot->dof());
+<<<<<<< HEAD
     q_init = sim->getJointPositions(robot_name);
     g_robot->setQ(q_init);
     g_robot->updateModel();
+=======
+    q_init << 0.0, -30.0, 0.0, 90.0, 0.0, 60.0, 0.0; // same as controller's nullspace pref
+    q_init *= M_PI / 180.0;
+    // g_robot->setQ(q_init);
+    // g_robot->updateModel();
+
+    // sim->setJointPositions(robot_name, q_init);
+    // sim->setJointVelocities(robot_name, VectorXd::Zero(g_robot->dof()));
+>>>>>>> 5ad808aeb2f848c0c0c81a9c168e186d5e38029d
 
     // fill in object information
     for (int i = 0; i < n_objects; ++i)

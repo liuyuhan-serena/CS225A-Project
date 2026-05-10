@@ -102,15 +102,15 @@ int main()
 
     // load simulation world
     auto sim = std::make_shared<SaiSimulation::SaiSimulation>(world_file, false);
-	// === Set a sane initial pose (EE-down hover) ===
-	VectorXd q_init(g_robot->dof());
-	q_init << 0.0, -30.0, 0.0, 90.0, 0.0, 60.0, 0.0;   // same as controller's nullspace pref
-	q_init *= M_PI / 180.0;
-	g_robot->setQ(q_init);
-	g_robot->updateModel();
+    // === Set a sane initial pose (EE-down hover) ===
+    VectorXd q_init(g_robot->dof());
+    q_init << 0.0, -30.0, 0.0, 90.0, 0.0, 60.0, 0.0; // same as controller's nullspace pref
+    q_init *= M_PI / 180.0;
+    // g_robot->setQ(q_init);
+    // g_robot->updateModel();
 
-	sim->setJointPositions(robot_name, q_init);
-	sim->setJointVelocities(robot_name, VectorXd::Zero(g_robot->dof()));
+    // sim->setJointPositions(robot_name, q_init);
+    // sim->setJointVelocities(robot_name, VectorXd::Zero(g_robot->dof()));
 
     // fill in object information
     for (int i = 0; i < n_objects; ++i)
@@ -120,9 +120,9 @@ int main()
     }
 
     // set simulation parameters
-	sim->setCollisionRestitution(0.0);
-	sim->setCoeffFrictionStatic(0.5);
-	sim->setCoeffFrictionDynamic(0.5);
+    sim->setCollisionRestitution(0.0);
+    sim->setCoeffFrictionStatic(0.5);
+    sim->setCoeffFrictionDynamic(0.5);
 
     /*------- Set up visualization -------*/
     redis_client.setEigen(JOINT_ANGLES_KEY, g_robot->q());
@@ -178,7 +178,7 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
 
     // RNG for fake CV noise
     std::default_random_engine rng(0);
-    std::normal_distribution<double> noise(0.0, 0.005);  // 5mm std-dev
+    std::normal_distribution<double> noise(0.0, 0.005); // 5mm std-dev
 
     // toggle this to false once teammate's real CV is online
     constexpr bool FAKE_CV_ENABLED = true;
@@ -197,14 +197,14 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
         {
             lock_guard<mutex> lock(mutex_update);
             double t = sim->time();
-            double radius = 0.15;     // 15 cm
-            double omega  = 2.67;     // rad/s, ~40cm/s (lower for early debug, e.g. 0.5)
+            double radius = 0.15; // 15 cm
+            double omega = 2.67;  // rad/s, ~40cm/s (lower for early debug, e.g. 0.5)
             double cx = 0.6, cy = 0.0, cz = 0.05;
 
             Affine3d mouse_pose = Affine3d::Identity();
             mouse_pose.translation() << cx + radius * std::cos(omega * t + M_PI_2),
-                                        cy + radius * std::sin(omega * t + M_PI_2),
-                                        cz;
+                cy + radius * std::sin(omega * t + M_PI_2),
+                cz;
             sim->setObjectPose("mouse", mouse_pose);
         }
 
@@ -215,36 +215,36 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
             g_robot->setQ(q_now);
             g_robot->updateModel();
             Affine3d T_world_link7 = g_robot->transform("link7");
-            Affine3d T_world_cam   = T_world_link7 * T_link7_cam;
+            Affine3d T_world_cam = T_world_link7 * T_link7_cam;
 
             // Publish 4x4 transform for CV team
             Matrix4d T_world_cam_mat = T_world_cam.matrix();
             redis_client.setEigen("cs225a::project::camera::T_world_cam", T_world_cam_mat);
 
-			if (FAKE_CV_ENABLED)
-			{
-				// ground-truth mouse in world
-				Affine3d T_world_mouse = sim->getObjectPose("mouse");
-				Vector3d p_world_mouse = T_world_mouse.translation();
+            if (FAKE_CV_ENABLED)
+            {
+                // ground-truth mouse in world
+                Affine3d T_world_mouse = sim->getObjectPose("mouse");
+                Vector3d p_world_mouse = T_world_mouse.translation();
 
-				// FOV check still needs camera-frame position
-				Vector3d p_cam_mouse = T_world_cam.inverse() * p_world_mouse;
+                // FOV check still needs camera-frame position
+                Vector3d p_cam_mouse = T_world_cam.inverse() * p_world_mouse;
 
-				// publish ground truth (no round-trip — avoid coupling fake CV to EE motion)
-				Vector3d p_world_published = p_world_mouse;
+                // publish ground truth (no round-trip — avoid coupling fake CV to EE motion)
+                Vector3d p_world_published = p_world_mouse;
 
-				// add noise (5mm std-dev)
-				p_world_published.x() += noise(rng);
-				p_world_published.y() += noise(rng);
-				p_world_published.z() += noise(rng);
+                // add noise (5mm std-dev)
+                p_world_published.x() += noise(rng);
+                p_world_published.y() += noise(rng);
+                p_world_published.z() += noise(rng);
 
-				// FOV check: only "detect" if mouse is in front of camera
-				bool in_view = (p_cam_mouse.z() > 0.05) && (p_cam_mouse.z() < 1.5);
+                // FOV check: only "detect" if mouse is in front of camera
+                bool in_view = (p_cam_mouse.z() > 0.05) && (p_cam_mouse.z() < 1.5);
 
-				redis_client.setEigen("cs225a::project::mouse::pos_world", p_world_published);
-				redis_client.set("cs225a::project::mouse::detected",  in_view ? "1" : "0");
-				redis_client.set("cs225a::project::mouse::timestamp", std::to_string(sim->time()));
-			}
+                redis_client.setEigen("cs225a::project::mouse::pos_world", p_world_published);
+                redis_client.set("cs225a::project::mouse::detected", in_view ? "1" : "0");
+                redis_client.set("cs225a::project::mouse::timestamp", std::to_string(sim->time()));
+            }
         }
 
         sim->integrate();
@@ -340,12 +340,12 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
 // // === Attach EE camera to link7 (using William's d405 left-eye position) ===
 // 	{
 // 			Eigen::Affine3d T_link7_to_camera = Eigen::Affine3d::Identity();
-			
+
 // 			// Translation: From Rizon4s.urdf left-eye ball positon (link7 frame)
 // 			T_link7_to_camera.translation() << 0.074, -0.01, 0.136;
-			
+
 // 			// Rotation: needed tuning
-// 			T_link7_to_camera.linear() = 
+// 			T_link7_to_camera.linear() =
 // 					Eigen::AngleAxisd(M_PI/2, Eigen::Vector3d::UnitY()).toRotationMatrix();
 
 // 			graphics->attachCameraToRobotLink(

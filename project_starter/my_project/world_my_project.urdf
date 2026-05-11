@@ -69,9 +69,9 @@
 
 	<!-- EE camera: attached to link7 in simviz.cpp via attachCameraToRobotLink -->
 	<camera name="ee_camera">
-		<position xyz="0.0 0.0 0.0" />
-		<vertical xyz="0.0 0.0 1.0" />
-		<lookat xyz="1.0 0.0 0.0" />
+		<position xyz="0.074 -0.01 0.136" />
+		<vertical xyz="1.074 -0.01 0.136" />
+		<lookat xyz="0.0 0.0 1.0" />
 	</camera>
 
 </world>

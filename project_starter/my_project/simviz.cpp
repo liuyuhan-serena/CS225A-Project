@@ -57,7 +57,9 @@ Affine3d getCameraExtrinsics()
 {
     Affine3d T = Affine3d::Identity();
     T.translation() << 0.074, -0.01, 0.136;
-    T.linear() = AngleAxisd(M_PI / 2, Vector3d::UnitY()).toRotationMatrix();
+    
+    T.linear() = AngleAxisd(0, Vector3d::UnitY()).toRotationMatrix(); 
+    
     return T;
 }
 

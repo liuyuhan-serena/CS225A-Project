@@ -134,8 +134,8 @@ public:
         // Replace with your cv::calibrateHandEye() result.
         // Camera is mounted on the flange, tilted -30° around X, offset forward.
         set_cam_in_flange_euler("XYZ",
-            -30.0, 0.0, 0.0,             // rotation  (degrees)
-            {0.05, 0.0, 0.02}            // translation [m]
+            90.0, 180.0, 90.0,             // rotation  (degrees)
+            {0.045, 0.0, 0.046}            // translation [m]
         );
     }
 

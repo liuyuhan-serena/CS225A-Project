@@ -181,6 +181,21 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
     // toggle this to false once teammate's real CV is online
     constexpr bool FAKE_CV_ENABLED = true;
 
+    // === Mouse random-wander setup (on tabletop) ===
+    // Table footprint (world_my_project.urdf): x in [0.1, 1.1], y in [-0.65, 0.65].
+    // Margin keeps the mouse clear of the table edges.
+    const double table_x_min = 0.25, table_x_max = 0.95;
+    const double table_y_min = -0.50, table_y_max = 0.50;
+    const double mouse_z      = 0.05;   // height above tabletop
+    const double mouse_speed  = 0.30;   // m/s (lower for early debug, e.g. 0.1)
+    const double waypoint_tol = 0.02;   // m, switch target when this close
+
+    std::uniform_real_distribution<double> rand_x(table_x_min, table_x_max);
+    std::uniform_real_distribution<double> rand_y(table_y_min, table_y_max);
+
+    Vector2d mouse_pos(0.6, 0.0);                    // start near table center
+    Vector2d mouse_target(rand_x(rng), rand_y(rng)); // first random waypoint
+
     while (fSimulationRunning)
     {
         timer.waitForNextLoop();
@@ -191,18 +206,23 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
             sim->setJointTorques(robot_name, control_torques + ui_torques);
         }
 
-        // === Mouse trajectory: circle, start at 12 o'clock (+y) ===
+        // === Mouse trajectory: random wander within tabletop bounds ===
         {
             lock_guard<mutex> lock(mutex_update);
-            double t = sim->time();
-            double radius = 0.15; // 15 cm
-            double omega = 2.67;  // rad/s, ~40cm/s (lower for early debug, e.g. 0.5)
-            double cx = 0.6, cy = 0.0, cz = 0.05;
+            double dt = 1.0 / sim_freq;
+
+            // pick a new random waypoint once the current one is reached
+            if ((mouse_target - mouse_pos).norm() < waypoint_tol)
+                mouse_target << rand_x(rng), rand_y(rng);
+
+            // step toward the target at constant speed
+            Vector2d dir = mouse_target - mouse_pos;
+            double dist = dir.norm();
+            if (dist > 1e-9)
+                mouse_pos += (dir / dist) * std::min(mouse_speed * dt, dist);
 
             Affine3d mouse_pose = Affine3d::Identity();
-            mouse_pose.translation() << cx + radius * std::cos(omega * t + M_PI_2),
-                cy + radius * std::sin(omega * t + M_PI_2),
-                cz;
+            mouse_pose.translation() << mouse_pos.x(), mouse_pos.y(), mouse_z;
             sim->setObjectPose("mouse", mouse_pose);
         }
 

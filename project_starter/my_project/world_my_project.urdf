@@ -3,7 +3,7 @@
 <world name="world_my_project" gravity="0.0 0.0 -9.81">
 
 	<robot name="Rizon4s">
-		<model dir="${CS225A_URDF_FOLDER}" path="Rizon4s.urdf"
+		<model dir="${CS225A_URDF_FOLDER}" path="Rizon4s_Grav.urdf"
 			name="Rizon4s" />
 		<origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
 	</robot>

@@ -31,6 +31,7 @@
 *.app
 
 # Folders
+venv
 bin
 build
 logs/*

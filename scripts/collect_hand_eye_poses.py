@@ -5,7 +5,7 @@ import pyrealsense2 as rs
 import flexivrdk  # pip install flexivrdk
 
 # ── Robot + camera setup ───────────────────────────────────────────────────
-robot = flexivrdk.Robot("Rizon4s-XXXXXX")   # your serial number
+robot = flexivrdk.Robot("Rizon4s-063394")   # your serialpy number
 robot.enable()
 while not robot.operational():
     pass
@@ -16,7 +16,7 @@ cfg.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 pipe.start(cfg)
 
 aruco_dict  = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
-board       = cv2.aruco.CharucoBoard((7, 5), 0.04, 0.03, aruco_dict)
+board       = cv2.aruco.CharucoBoard((7, 5), 0.0385 , 0.03, aruco_dict)
 cam_matrix  = None   # filled after first detection
 dist_coeffs = None
 

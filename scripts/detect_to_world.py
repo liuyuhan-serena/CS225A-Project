@@ -1,0 +1,408 @@
+import time
+import cv2
+import numpy as np
+import pyrealsense2 as rs
+from ultralytics import YOLO
+from scipy.spatial.transform import Rotation as R
+import flexivrdk
+
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+ROBOT_SN = "Rizon4s-063394"
+
+MODEL_PATH = "../models/best.pt"
+
+# Camera pose in flange frame
+# set_cam_in_flange_euler("XYZ", 90, 180, 90, [0.045, 0.0, 0.046])
+
+CAM_RX = 90.0
+CAM_RY = 180.0
+CAM_RZ = 90.0
+
+CAM_TX = 0.045
+CAM_TY = 0.0
+CAM_TZ = 0.046
+
+
+# ============================================================
+# Convert pose -> homogeneous transform
+#
+# Input:
+# [x, y, z, qw, qx, qy, qz]
+# ============================================================
+def pose_to_matrix(pose):
+
+    x, y, z, qw, qx, qy, qz = pose
+
+    T = np.eye(4)
+
+    rot = R.from_quat([qx, qy, qz, qw])
+
+    T[:3, :3] = rot.as_matrix()
+
+    T[:3, 3] = [x, y, z]
+
+    return T
+
+
+# ============================================================
+# Euler XYZ -> homogeneous transform
+# ============================================================
+def euler_xyz_to_matrix(rx_deg, ry_deg, rz_deg, translation):
+
+    T = np.eye(4)
+
+    rot = R.from_euler(
+        'xyz',
+        [rx_deg, ry_deg, rz_deg],
+        degrees=True
+    )
+
+    T[:3, :3] = rot.as_matrix()
+
+    T[:3, 3] = translation
+
+    return T
+
+
+# ============================================================
+# Pretty print
+# ============================================================
+def print_transform(name, T):
+
+    print(f"\n{name}:")
+    print(np.array_str(T, precision=4, suppress_small=True))
+
+
+# ============================================================
+# CONNECT TO ROBOT
+# ============================================================
+
+print("Connecting to robot...")
+
+robot = flexivrdk.Robot(ROBOT_SN)
+
+print("Connected to robot.")
+
+time.sleep(1)
+
+
+# ============================================================
+# LOAD YOLO MODEL
+# ============================================================
+
+print("Loading YOLO model...")
+
+model = YOLO(MODEL_PATH)
+
+print("Model loaded.")
+
+
+# ============================================================
+# START REALSENSE
+# ============================================================
+
+print("Starting RealSense D405...")
+
+pipeline = rs.pipeline()
+
+config = rs.config()
+
+config.enable_stream(
+    rs.stream.color,
+    640,
+    480,
+    rs.format.bgr8,
+    15
+)
+
+config.enable_stream(
+    rs.stream.depth,
+    640,
+    480,
+    rs.format.z16,
+    15
+)
+
+profile = pipeline.start(config)
+
+align = rs.align(rs.stream.color)
+
+# Camera intrinsics
+color_stream = profile.get_stream(rs.stream.color)
+
+intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+
+fx = intrinsics.fx
+fy = intrinsics.fy
+cx = intrinsics.ppx
+cy = intrinsics.ppy
+
+print("\nCamera intrinsics:")
+print(f"fx = {fx}")
+print(f"fy = {fy}")
+print(f"cx = {cx}")
+print(f"cy = {cy}")
+
+
+# ============================================================
+# CAMERA IN FLANGE TRANSFORM
+# ============================================================
+
+T_flange_camera = euler_xyz_to_matrix(
+    CAM_RX,
+    CAM_RY,
+    CAM_RZ,
+    [CAM_TX, CAM_TY, CAM_TZ]
+)
+
+print_transform("T_flange_camera", T_flange_camera)
+
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+
+print("\nControls:")
+print("  SPACE = detect object + compute world position")
+print("  q     = quit")
+
+try:
+
+    while True:
+
+        # ----------------------------------------------------
+        # Get frames
+        # ----------------------------------------------------
+        frames = pipeline.wait_for_frames()
+
+        aligned_frames = align.process(frames)
+
+        depth_frame = aligned_frames.get_depth_frame()
+
+        color_frame = aligned_frames.get_color_frame()
+
+        if not depth_frame or not color_frame:
+            continue
+
+        color_image = np.asanyarray(color_frame.get_data())
+
+        display = color_image.copy()
+
+        cv2.putText(
+            display,
+            "SPACE = detect object",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (0, 255, 0),
+            2
+        )
+
+        cv2.imshow("D405", display)
+
+        key = cv2.waitKey(1)
+
+        # ----------------------------------------------------
+        # QUIT
+        # ----------------------------------------------------
+        if key == ord('q'):
+            break
+
+        # ----------------------------------------------------
+        # DETECT OBJECT
+        # ----------------------------------------------------
+        if key == 32:  # SPACE
+
+            print("\nRunning detection...")
+
+            # ------------------------------------------------
+            # Current robot pose
+            # ------------------------------------------------
+            state = robot.states()
+
+            T_world_flange = pose_to_matrix(
+                state.tcp_pose
+            )
+
+            T_world_camera = (
+                T_world_flange @ T_flange_camera
+            )
+
+            print_transform(
+                "T_world_camera",
+                T_world_camera
+            )
+
+            # ------------------------------------------------
+            # YOLO inference
+            # ------------------------------------------------
+            results = model(color_image)
+
+            annotated = color_image.copy()
+
+            found = False
+
+            for r in results:
+
+                boxes = r.boxes
+
+                for box in boxes:
+
+                    found = True
+
+                    # ----------------------------------------
+                    # Bounding box
+                    # ----------------------------------------
+                    x1, y1, x2, y2 = (
+                        box.xyxy[0]
+                        .cpu()
+                        .numpy()
+                    )
+
+                    x1 = int(x1)
+                    y1 = int(y1)
+                    x2 = int(x2)
+                    y2 = int(y2)
+
+                    # ----------------------------------------
+                    # Center pixel
+                    # ----------------------------------------
+                    center_x = int((x1 + x2) / 2)
+
+                    center_y = int((y1 + y2) / 2)
+
+                    # ----------------------------------------
+                    # Depth
+                    # ----------------------------------------
+                    depth = depth_frame.get_distance(
+                        center_x,
+                        center_y
+                    )
+
+                    # Skip invalid depth
+                    if depth <= 0:
+                        continue
+
+                    # ----------------------------------------
+                    # Pixel -> camera coordinates
+                    # ----------------------------------------
+                    Z = depth
+
+                    X = (
+                        (center_x - cx)
+                        * Z
+                        / fx
+                    )
+
+                    Y = (
+                        (center_y - cy)
+                        * Z
+                        / fy
+                    )
+
+                    # ----------------------------------------
+                    # Point in camera frame
+                    # ----------------------------------------
+                    p_cam = np.array([
+                        X,
+                        Y,
+                        Z,
+                        1.0
+                    ])
+
+                    # ----------------------------------------
+                    # Camera -> world
+                    # ----------------------------------------
+                    p_world = (
+                        T_world_camera @ p_cam
+                    )
+
+                    # ----------------------------------------
+                    # PRINT RESULTS
+                    # ----------------------------------------
+                    print("\n================================")
+                    print("DETECTION")
+                    print("================================")
+
+                    print("\nPixel:")
+                    print(f"({center_x}, {center_y})")
+
+                    print("\nCamera frame:")
+                    print(
+                        f"X = {X:.4f} m"
+                    )
+                    print(
+                        f"Y = {Y:.4f} m"
+                    )
+                    print(
+                        f"Z = {Z:.4f} m"
+                    )
+
+                    print("\nWorld frame:")
+                    print(
+                        f"X = {p_world[0]:.4f} m"
+                    )
+                    print(
+                        f"Y = {p_world[1]:.4f} m"
+                    )
+                    print(
+                        f"Z = {p_world[2]:.4f} m"
+                    )
+
+                    print("================================")
+
+                    # ----------------------------------------
+                    # Draw visualization
+                    # ----------------------------------------
+                    cv2.rectangle(
+                        annotated,
+                        (x1, y1),
+                        (x2, y2),
+                        (0, 255, 0),
+                        2
+                    )
+
+                    cv2.circle(
+                        annotated,
+                        (center_x, center_y),
+                        6,
+                        (0, 0, 255),
+                        -1
+                    )
+
+                    text = (
+                        f"W: "
+                        f"{p_world[0]:.3f}, "
+                        f"{p_world[1]:.3f}, "
+                        f"{p_world[2]:.3f}"
+                    )
+
+                    cv2.putText(
+                        annotated,
+                        text,
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2
+                    )
+
+            if not found:
+                print("\nNo objects detected.")
+
+            cv2.imshow(
+                "Detection Result",
+                annotated
+            )
+
+finally:
+
+    pipeline.stop()
+
+    cv2.destroyAllWindows()
+
+    print("\nStopped.")

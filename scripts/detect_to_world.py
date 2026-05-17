@@ -5,26 +5,110 @@ import pyrealsense2 as rs
 from ultralytics import YOLO
 from scipy.spatial.transform import Rotation as R
 import flexivrdk
+import redis
+import ast
+import threading
+import time
 
+redis_client = redis.Redis(decode_responses=True)
+LINK7_TRANSFORM_KEY = "opensai::sensors::Titania::link7_transform"
+FLANGE_TRANSFORM_KEY = "opensai::sensors::Titania::flange_transform"
+
+def worker(delay):
+    redis_client_local = redis.Redis(decode_responses=True)
+    time.sleep(delay)
+
+    while True:
+        # TCP 
+        T_flange_to_base_frame = string_to_4x4_numpy(redis_client.get(FLANGE_TRANSFORM_KEY))
+        T_tcp_to_flange = np.eye(4)
+        T_tcp_to_flange[:3, -1] = np.array([0, 0, 0.20])  # from CAD
+
+        T_tcp_to_base_frame = T_flange_to_base_frame @ T_tcp_to_flange
+
+        print_transform("T_tcp_to_base_frame", T_tcp_to_base_frame)
+
+        time.sleep(0.1)
+
+def string_to_4x4_numpy(matrix_str):
+    """
+    Convert a string representation of a 4x4 matrix to a NumPy array.
+    """
+    matrix = np.array(ast.literal_eval(matrix_str), dtype=float)
+
+    if matrix.shape != (4, 4):
+        raise ValueError("Input must represent a 4x4 matrix.")
+
+    return matrix
 
 # ============================================================
 # CONFIG
 # ============================================================
 
+def rot_x(theta):
+    """
+    Rotation matrix around X-axis.
+    theta: angle in radians
+    """
+    c = np.cos(theta)
+    s = np.sin(theta)
+
+    return np.array([
+        [1, 0, 0],
+        [0, c, -s],
+        [0, s,  c]
+    ])
+
+
+def rot_y(theta):
+    """
+    Rotation matrix around Y-axis.
+    theta: angle in radians
+    """
+    c = np.cos(theta)
+    s = np.sin(theta)
+
+    return np.array([
+        [ c, 0, s],
+        [ 0, 1, 0],
+        [-s, 0, c]
+    ])
+
+
+def rot_z(theta):
+    """
+    Rotation matrix around Z-axis.
+    theta: angle in radians
+    """
+    c = np.cos(theta)
+    s = np.sin(theta)
+
+    return np.array([
+        [c, -s, 0],
+        [s,  c, 0],
+        [0,  0, 1]
+    ])
+
 ROBOT_SN = "Rizon4s-063394"
 
 MODEL_PATH = "../models/best.pt"
 
-# Camera pose in flange frame
-# set_cam_in_flange_euler("XYZ", 90, 180, 90, [0.045, 0.0, 0.046])
+# Rotation matrix from camera frame to EE frame
+# (3x3 rotation matrix)
+# CAM_ROT_MATRIX = np.array([
+# [0,  np.cos(np.deg2rad(20)),  np.cos(np.deg2rad(110))],
+#    [-1,            0,      0],
+#    [0,         np.cos(np.deg2rad(110)), np.sin(np.deg2rad(20))]
+# ])
+CAM_ROT_MATRIX = rot_y(np.deg2rad(-20)) @ rot_z(np.deg2rad(90))
 
-CAM_RX = 90.0
-CAM_RY = 180.0
-CAM_RZ = 90.0
-
-CAM_TX = 0.045
-CAM_TY = 0.0
-CAM_TZ = 0.046
+# Translation vector from camera frame to EE frame
+# (3x1 translation vector in meters)
+CAM_TRANS_VECTOR = np.array([
+    0.074,
+    -0.01,
+    0.136
+])
 
 
 # ============================================================
@@ -149,17 +233,14 @@ print(f"cy = {cy}")
 
 
 # ============================================================
-# CAMERA IN FLANGE TRANSFORM
+# CAMERA IN EE TRANSFORM
 # ============================================================
 
-T_flange_camera = euler_xyz_to_matrix(
-    CAM_RX,
-    CAM_RY,
-    CAM_RZ,
-    [CAM_TX, CAM_TY, CAM_TZ]
-)
+T_ee_camera = np.eye(4)
+T_ee_camera[:3, :3] = CAM_ROT_MATRIX
+T_ee_camera[:3, 3] = CAM_TRANS_VECTOR
 
-print_transform("T_flange_camera", T_flange_camera)
+print_transform("T_ee_camera", T_ee_camera)
 
 
 # ============================================================
@@ -169,6 +250,9 @@ print_transform("T_flange_camera", T_flange_camera)
 print("\nControls:")
 print("  SPACE = detect object + compute world position")
 print("  q     = quit")
+
+t1 = threading.Thread(target=worker, args=(1,))
+t1.start()
 
 try:
 
@@ -222,19 +306,39 @@ try:
             # ------------------------------------------------
             # Current robot pose
             # ------------------------------------------------
+            T_link7_to_base_frame = string_to_4x4_numpy(redis_client.get(LINK7_TRANSFORM_KEY))
+
+            T_camera_to_link7 = np.eye(4)
+            T_camera_to_link7[:3, :3] = CAM_ROT_MATRIX
+            T_camera_to_link7[:3, -1] = np.array([0.074, -0.01, 0.136])
+
+            T_world_camera = T_link7_to_base_frame @ T_camera_to_link7
+
+            # TCP 
+            T_flange_to_base_frame = string_to_4x4_numpy(redis_client.get(FLANGE_TRANSFORM_KEY))
+            T_tcp_to_flange = np.eye(4)
+            T_tcp_to_flange[:3, -1] = np.array([0, 0, 0.20])  # from CAD
+
+            T_tcp_to_base_frame = T_flange_to_base_frame @ T_tcp_to_flange
+
             state = robot.states()
 
-            T_world_flange = pose_to_matrix(
-                state.tcp_pose
-            )
+            # T_world_ee = pose_to_matrix(
+            #     state.tcp_pose
+            # )
 
-            T_world_camera = (
-                T_world_flange @ T_flange_camera
-            )
+            # T_world_camera = (
+            #     T_world_ee @ T_ee_camera
+            # )
 
             print_transform(
                 "T_world_camera",
                 T_world_camera
+            )
+
+            print_transform(
+                "T_tcp_to_base_frame",
+                T_tcp_to_base_frame
             )
 
             # ------------------------------------------------
@@ -406,3 +510,5 @@ finally:
     cv2.destroyAllWindows()
 
     print("\nStopped.")
+
+t1.end()

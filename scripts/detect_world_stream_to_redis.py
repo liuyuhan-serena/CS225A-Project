@@ -5,6 +5,7 @@ import queue
 import signal
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,9 +57,12 @@ class DetectionPacket:
     seq: int
     timestamp: float
     points: list
+    raw_best_point: list | None
     best_point: list | None
     best_confidence: float | None
     boxes: list
+    outlier_rejected: bool
+    filter_median: list | None
 
 
 def string_to_4x4_numpy(matrix_str):
@@ -81,6 +85,46 @@ def get_redis_transform(client, key):
 
 def python_list_string(values):
     return json.dumps(values, separators=(",", ":"))
+
+
+class MedianOutlierFilter:
+    def __init__(self, window_size, max_distance, reset_after_rejections):
+        self.window = deque(maxlen=max(1, window_size))
+        self.max_distance = max_distance
+        self.reset_after_rejections = max(1, reset_after_rejections)
+        self.rejections = 0
+
+    def update(self, point):
+        if point is None:
+            current_median = self.median()
+            median_list = current_median.tolist() if current_median is not None else None
+            return None, False, median_list
+
+        point_array = np.array(point, dtype=float)
+        current_median = self.median()
+
+        if current_median is not None:
+            distance = float(np.linalg.norm(point_array - current_median))
+
+            if distance > self.max_distance:
+                self.rejections += 1
+
+                if self.rejections < self.reset_after_rejections:
+                    return current_median.tolist(), True, current_median.tolist()
+
+                self.window.clear()
+
+        self.rejections = 0
+        self.window.append(point_array)
+        updated_median = self.median()
+
+        return updated_median.tolist(), False, updated_median.tolist()
+
+    def median(self):
+        if not self.window:
+            return None
+
+        return np.median(np.stack(self.window, axis=0), axis=0)
 
 
 def put_latest(q, item):
@@ -111,8 +155,11 @@ def publisher(stop_event, packets, host, port):
             "seq": packet.seq,
             "timestamp": packet.timestamp,
             "num_detections": len(packet.points),
+            "raw_best_point": packet.raw_best_point,
             "best_confidence": packet.best_confidence,
             "boxes": packet.boxes,
+            "outlier_rejected": packet.outlier_rejected,
+            "filter_median": packet.filter_median,
             "desired_position_key": DESIRED_POSITION_KEY,
             "detected_points_key": DETECTED_POINTS_KEY,
         }
@@ -258,6 +305,9 @@ def parse_args():
     parser.add_argument("--redis-port", type=int, default=6379)
     parser.add_argument("--confidence", type=float, default=0.25)
     parser.add_argument("--depth-sample-radius", type=int, default=2)
+    parser.add_argument("--median-window", type=int, default=5)
+    parser.add_argument("--outlier-distance", type=float, default=0.15)
+    parser.add_argument("--reset-after-rejections", type=int, default=6)
     parser.add_argument("--camera-fps", type=int, default=15)
     parser.add_argument("--publish-hz", type=float, default=10.0)
     parser.add_argument("--no-display", action="store_true")
@@ -313,6 +363,11 @@ def main():
     seq = 0
     last_publish_time = 0.0
     publish_period = 1.0 / args.publish_hz if args.publish_hz > 0 else 0.0
+    position_filter = MedianOutlierFilter(
+        window_size=args.median_window,
+        max_distance=args.outlier_distance,
+        reset_after_rejections=args.reset_after_rejections
+    )
 
     print("\nStreaming detections to Redis:")
     print(f"  desired position: {DESIRED_POSITION_KEY}")
@@ -348,7 +403,7 @@ def main():
             T_world_camera = T_link7_to_base_frame @ T_camera_to_link7
 
             results = model(color_image, verbose=False)
-            points, best_point, best_confidence, boxes = compute_world_detections(
+            points, raw_best_point, best_confidence, boxes = compute_world_detections(
                 results,
                 depth_frame,
                 intrinsics,
@@ -356,20 +411,31 @@ def main():
                 args.depth_sample_radius,
                 args.confidence
             )
+            best_point, outlier_rejected, filter_median = position_filter.update(
+                raw_best_point
+            )
 
             seq += 1
             packet = DetectionPacket(
                 seq=seq,
                 timestamp=now,
                 points=points,
+                raw_best_point=raw_best_point,
                 best_point=best_point,
                 best_confidence=best_confidence,
-                boxes=boxes
+                boxes=boxes,
+                outlier_rejected=outlier_rejected,
+                filter_median=filter_median
             )
             put_latest(packets, packet)
 
             if best_point is None:
                 print(f"[{seq}] no valid detection")
+            elif outlier_rejected:
+                print(
+                    f"[{seq}] rejected outlier, holding median = "
+                    f"{python_list_string(best_point)}"
+                )
             else:
                 print(f"[{seq}] desired_position = {python_list_string(best_point)}")
 

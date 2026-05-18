@@ -28,7 +28,7 @@
 	</static_object>
 
 	<static_object name="table">
-		<origin xyz="0.6 0.0 -0.05" rpy="0 0 0" />
+		<origin xyz="0.6 0.0 -0.0490" rpy="0 0 0" />
 		<visual>
 			<origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
 			<geometry>

@@ -2,12 +2,11 @@
  * @file controller.cpp
  * @brief Dumb executor: tracks EE pose goals published to redis.
  *
- * This controller is SIMULATION SCAFFOLDING. It stands in for the Flexiv
- * controller that runs on the real Rizon4s. It is intentionally state-agnostic:
- * it does NOT know about SEARCHING / TRACKING. It only reads a desired EE
- * position + orientation from redis and executes them.
+ * SIMULATION SCAFFOLDING. Stands in for the Flexiv controller on the real
+ * Rizon4s. Intentionally STATE-AGNOSTIC: it does NOT know about SEARCHING /
+ * TRACKING. It only reads a desired EE position + orientation from redis and
+ * executes them. All decisions live in the Python state machine.
  *
- * The Python state machine owns all decisions.
  *   Reads from redis:
  *     cs225a::project::ee::desired_pos   (Vector3d) - EE position goal
  *     cs225a::project::ee::desired_ori   (Matrix3d) - EE orientation goal
@@ -22,6 +21,7 @@
 
 #include <iostream>
 #include <string>
+#include <algorithm>
 
 using namespace std;
 using namespace Eigen;
@@ -41,7 +41,7 @@ static const string EE_POS_KEY         = "cs225a::project::ee::current_pos";
 
 int main()
 {
-    static const string robot_file = string(CS225A_URDF_FOLDER) + "/Rizon4s.urdf";
+    static const string robot_file = string(CS225A_URDF_FOLDER) + "/Rizon4s_Grav.urdf";
 
     auto redis_client = SaiCommon::RedisClient();
     redis_client.connect();
@@ -56,30 +56,33 @@ int main()
     robot->setDq(redis_client.getEigen(JOINT_VELOCITIES_KEY));
     robot->updateModel();
 
-    int dof = robot->dof();
+    const int dof = robot->dof();
     VectorXd command_torques = VectorXd::Zero(dof);
     MatrixXd N_prec = MatrixXd::Identity(dof, dof);
 
+    // --------------------
     // Pose task on link7 (control point = camera mount, matches simviz extrinsics)
     const string control_link = "link7";
     const Vector3d control_point = Vector3d(0.074, -0.01, 0.136);
     Affine3d compliant_frame = Affine3d::Identity();
     compliant_frame.translation() = control_point;
+
     auto pose_task = std::make_shared<SaiPrimitives::MotionForceTask>(
         robot, control_link, compliant_frame);
+
     pose_task->setPosControlGains(400, 40, 0);
     pose_task->setOriControlGains(400, 40, 0);
 
-    // === Velocity saturation: moderate linear + high angular ===
-    //   linear  = 0.10 m/s  (below 15 cm/s hardware limit)
-    //   angular = 6.0 rad/s (fast rotation to track the mouse)
+    // Velocity saturation: linear low, angular high.
+    // NOTE: Python also rate-limits the position goal (MAX_GOAL_SPEED), so this
+    // mainly acts as a backstop. Tune if the arm can't keep up.
     pose_task->enableVelocitySaturation(0.10, 6.0);
 
-    // Joint task (nullspace posture)
+    // --------------------
+    // Joint task (weak nullspace posture; strong would fight the pose task)
     auto joint_task = std::make_shared<SaiPrimitives::JointTask>(robot);
-    joint_task->setGains(400, 40, 0);
-    VectorXd q_desired = robot->q();
-    joint_task->setGoalPosition(q_desired);
+    joint_task->setGains(20, 10, 0);
+    joint_task->setGoalPosition(robot->q());
 
     // Cache initial EE pose as "home"
     Vector3d ee_pos_home = robot->position(control_link, control_point);
@@ -97,15 +100,18 @@ int main()
     redis_client.setEigen(EE_DESIRED_ORI_KEY, ee_ori_home);
     redis_client.setEigen(EE_POS_KEY,         ee_pos_home);
 
+    // --------------------
+    // Control loop
     runloop = true;
-    double control_freq = 1000;
+    const double control_freq = 1000.0;
     SaiCommon::LoopTimer timer(control_freq, 1e6);
 
-    int debug_counter = 0;
+    long long counter = 0;
 
     while (runloop)
     {
         timer.waitForNextLoop();
+        const double time = timer.elapsedSimTime();
 
         // 1. Read robot state
         robot->setQ(redis_client.getEigen(JOINT_ANGLES_KEY));
@@ -131,16 +137,31 @@ int main()
         pose_task->updateTaskModel(N_prec);
         joint_task->updateTaskModel(pose_task->getTaskAndPreviousNullspace());
 
-        // 6. Compute and send torques
+        // 6. Compute torques
         command_torques = pose_task->computeTorques() + joint_task->computeTorques();
+
+        // 7. Torque clamp for safety (salvaged from friend's controller —
+        //    pure execution-layer safety, legitimately the controller's job).
+        //    If too restrictive, raise torque_limit.
+        const double torque_limit = 100.0;
+        for (int i = 0; i < dof; i++) {
+            command_torques(i) = std::max(
+                -torque_limit,
+                std::min(torque_limit, command_torques(i)));
+        }
+
         redis_client.setEigen(JOINT_TORQUES_COMMANDED_KEY, command_torques);
 
-        // 7. Debug print every 0.5 s
-        if (++debug_counter % 500 == 0) {
+        // 8. Debug print every 0.5 s
+        if (counter % 500 == 0) {
             double pos_err = (desired_pos - p_ee).norm();
-            cout << "[ctrl] desired_pos=" << desired_pos.transpose()
-                 << "  pos_err=" << pos_err << endl;
+            cout << "[ctrl] t=" << time
+                 << " | desired_pos=" << desired_pos.transpose()
+                 << " | ee_pos=" << p_ee.transpose()
+                 << " | pos_err=" << pos_err << endl;
         }
+
+        counter++;
     }
 
     timer.stop();

@@ -5,6 +5,11 @@
  * This version publishes:
  *   - T_world_cam (4x4 matrix) for CV team to convert detections to world frame
  *   - Fake CV (ground-truth mouse pos in world frame) for testing without real CV
+ *
+ * Mouse motion (see simulation thread):
+ *   MOUSE_STATIONARY = true  -> fixed position (debug: verify EE converges)
+ *   MOUSE_STATIONARY = false -> random wander, gated by a move/pause cycle:
+ *                               moves for MOVE_DURATION, holds for PAUSE_DURATION
  */
 
 #include <math.h>
@@ -57,9 +62,9 @@ Affine3d getCameraExtrinsics()
 {
     Affine3d T = Affine3d::Identity();
     T.translation() << 0.074, -0.01, 0.136;
-    
-    T.linear() = AngleAxisd(0, Vector3d::UnitY()).toRotationMatrix(); 
-    
+
+    T.linear() = AngleAxisd(0, Vector3d::UnitY()).toRotationMatrix();
+
     return T;
 }
 
@@ -69,7 +74,7 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim);
 int main()
 {
     SaiModel::URDF_FOLDERS["CS225A_URDF_FOLDER"] = string(CS225A_URDF_FOLDER);
-    static const string robot_file = string(CS225A_URDF_FOLDER) + "/Rizon4s.urdf";
+    static const string robot_file = string(CS225A_URDF_FOLDER) + "/Rizon4s_Grav.urdf";
     static const string world_file = string(MY_PROJECT_FOLDER) + "/world_my_project.urdf";
     std::cout << "Loading URDF world model file: " << world_file << endl;
 
@@ -181,6 +186,14 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
     // toggle this to false once teammate's real CV is online
     constexpr bool FAKE_CV_ENABLED = true;
 
+    // === Mouse motion mode ================================================
+    //   false -> random wander, gated by the move/pause cycle below
+    //   true  -> STATIONARY at MOUSE_FIXED_POS (debug: verify EE converges
+    //            directly overhead, removes the "can't keep up" variable)
+    constexpr bool MOUSE_STATIONARY = false;
+    const Vector3d MOUSE_FIXED_POS(0.45, 0.0, 0.05); // used only if stationary
+    // =====================================================================
+
     // === Mouse random-wander setup (on tabletop) ===
     // Table footprint (world_my_project.urdf): x in [0.1, 1.1], y in [-0.65, 0.65].
     // Margin keeps the mouse clear of the table edges.
@@ -196,6 +209,12 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
     Vector2d mouse_pos(0.6, 0.0);                    // start near table center
     Vector2d mouse_target(rand_x(rng), rand_y(rng)); // first random waypoint
 
+    // === Move/pause cycle: move for MOVE_DURATION, then hold for PAUSE_DURATION ===
+    const double MOVE_DURATION  = 2.0;   // s, mouse moves
+    const double PAUSE_DURATION = 5.0;   // s, mouse holds still
+    double phase_start_time = 0.0;       // sim time when current phase began
+    bool   is_moving        = true;      // start in the moving phase
+
     while (fSimulationRunning)
     {
         timer.waitForNextLoop();
@@ -206,23 +225,54 @@ void simulation(std::shared_ptr<SaiSimulation::SaiSimulation> sim)
             sim->setJointTorques(robot_name, control_torques + ui_torques);
         }
 
-        // === Mouse trajectory: random wander within tabletop bounds ===
+        // === Mouse trajectory ===
         {
             lock_guard<mutex> lock(mutex_update);
-            double dt = 1.0 / sim_freq;
-
-            // pick a new random waypoint once the current one is reached
-            if ((mouse_target - mouse_pos).norm() < waypoint_tol)
-                mouse_target << rand_x(rng), rand_y(rng);
-
-            // step toward the target at constant speed
-            Vector2d dir = mouse_target - mouse_pos;
-            double dist = dir.norm();
-            if (dist > 1e-9)
-                mouse_pos += (dir / dist) * std::min(mouse_speed * dt, dist);
 
             Affine3d mouse_pose = Affine3d::Identity();
-            mouse_pose.translation() << mouse_pos.x(), mouse_pos.y(), mouse_z;
+
+            if (MOUSE_STATIONARY)
+            {
+                // Debug: hold a fixed position so EE convergence can be
+                // verified without the moving-target variable.
+                mouse_pose.translation() = MOUSE_FIXED_POS;
+            }
+            else
+            {
+                // Random wander, gated by a move(2s) / pause(5s) cycle.
+                double dt  = 1.0 / sim_freq;
+                double now = sim->time();
+
+                // --- phase transition ---
+                if (is_moving && (now - phase_start_time) >= MOVE_DURATION)
+                {
+                    is_moving = false;
+                    phase_start_time = now;
+                }
+                else if (!is_moving && (now - phase_start_time) >= PAUSE_DURATION)
+                {
+                    is_moving = true;
+                    phase_start_time = now;
+                    // fresh waypoint each time it starts moving again
+                    mouse_target << rand_x(rng), rand_y(rng);
+                }
+
+                // --- only advance position during the moving phase ---
+                if (is_moving)
+                {
+                    if ((mouse_target - mouse_pos).norm() < waypoint_tol)
+                        mouse_target << rand_x(rng), rand_y(rng);
+
+                    Vector2d dir = mouse_target - mouse_pos;
+                    double dist = dir.norm();
+                    if (dist > 1e-9)
+                        mouse_pos += (dir / dist) * std::min(mouse_speed * dt, dist);
+                }
+                // during pause: mouse_pos unchanged -> block stays put
+
+                mouse_pose.translation() << mouse_pos.x(), mouse_pos.y(), mouse_z;
+            }
+
             sim->setObjectPose("mouse", mouse_pose);
         }
 

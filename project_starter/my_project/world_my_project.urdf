@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 
-<world name="world_my_project" gravity="0.0 0.0 -1.0">
+<world name="world_my_project" gravity="0.0 0.0 -9.81">
 
-	<robot name="panda_arm_hand">
-		<model dir="${CS225A_URDF_FOLDER}/panda" path="panda_arm_hand.urdf"
-			name="panda_arm_hand" />
+	<robot name="Rizon4s">
+		<model dir="${CS225A_URDF_FOLDER}" path="Rizon4s_Grav.urdf"
+			name="Rizon4s" />
 		<origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
 	</robot>
 
@@ -27,25 +27,44 @@
 		</collision>
 	</static_object>
 
-	<dynamic_object name="Ball">
-		<origin xyz="0.7 0.0 0.5" rpy="0 0 0" />
+	<static_object name="table">
+		<origin xyz="0.6 0.0 -0.0490" rpy="0 0 0" />
 		<visual>
 			<origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
 			<geometry>
-				<sphere radius="0.03" />
+				<box size="1.0 1.3 0.1" />
+			</geometry>
+			<material name="material_table">
+				<color rgba="0.82 0.65 0.44 1.0" />
+			</material>
+		</visual>
+		<collision>
+			<origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+			<geometry>
+				<box size="1.0 1.3 0.1" />
+			</geometry>
+		</collision>
+	</static_object>
+
+	<dynamic_object name="mouse">
+		<origin xyz="0.6 0.0 0.05" rpy="0 0 0" />
+		<visual>
+			<origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
+			<geometry>
+				<box size="0.12 0.09 0.02" />
 			</geometry>
 			<material name="material_red">
 				<color rgba="1.0 0.1 0.1 1.0" />
 			</material>
 		</visual>
 		<collision>
-			<origin xyz="0.0 0.0 0" rpy="0 0 0" />
+			<origin xyz="0.0 0.0 0.0" rpy="0 0 0" />
 			<geometry>
-				<sphere radius="0.03" />
+				<box size="0.12 0.09 0.02" />
 			</geometry>
 		</collision>
 		<inertial>
-			<mass value="0.2" />
+			<mass value="0.05" />
 			<inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0" />
 		</inertial>
 	</dynamic_object>
@@ -65,6 +84,13 @@
 		<position xyz="2.0 0.0 1.0" />
 		<vertical xyz="0.0 0.0 1.0" />
 		<lookat xyz="0 0 0.5" />
+	</camera>
+
+	<!-- EE camera: attached to link7 in simviz.cpp via attachCameraToRobotLink -->
+	<camera name="ee_camera">
+		<position xyz="0.074 -0.01 0.136" />
+		<vertical xyz="1.074 -0.01 0.136" />
+		<lookat xyz="0.0 0.0 1.0" />
 	</camera>
 
 </world>

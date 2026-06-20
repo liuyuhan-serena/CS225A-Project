@@ -45,3 +45,5 @@ logs/*
 
 # Mac
 .DS_Store
+urdf_models/rizon4s/
+urdf_models/rizon4/
